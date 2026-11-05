@@ -8,11 +8,13 @@ export const token = () => randomBytes(32).toString("base64url");
 export const hash = (s) =>
   createHash("sha256").update(s).digest("base64url");
 
-export const cookieOptions = (config) => {
+export const cookieOptions = (config, req) => {
   const isHttps =
     Boolean(config.origin?.startsWith("https:")) ||
+    Boolean(req?.secure) ||
+    req?.get("x-forwarded-proto") === "https" ||
     process.env.COOKIE_SECURE === "true";
-  let sameSite = process.env.COOKIE_SAMESITE || "lax";
+  let sameSite = process.env.COOKIE_SAMESITE || (isHttps ? "none" : "lax");
   if (sameSite === "none" && !isHttps) {
     sameSite = "lax";
   }
@@ -37,7 +39,11 @@ export function csrf(config) {
 }
 
 export async function currentUser(db, req) {
-  const id = req.cookies?.dixaz_session;
+  let id = req.cookies?.dixaz_session;
+  const auth = req.get("authorization");
+  if (!id && auth && auth.startsWith("Bearer ")) {
+    id = auth.slice(7).trim();
+  }
   if (typeof id !== "string" || id.length > 128) return null;
   const row = await stores(db).sessions.findOne({
     _id: hash(id),
@@ -250,24 +256,28 @@ export function authRoutes(db, config) {
     });
 
     res.cookie("dixaz_session", session, {
-      ...cookieOptions(config),
+      ...cookieOptions(config, req),
       maxAge: 7 * 86400000,
     });
 
-    return res.json({ ok: true, user });
+    return res.json({ ok: true, user, token: session });
   });
 
   router.get("/logout", async (req, res) => {
-    const id = req.cookies?.dixaz_session;
+    let id = req.cookies?.dixaz_session;
+    const auth = req.get("authorization");
+    if (!id && auth && auth.startsWith("Bearer ")) id = auth.slice(7).trim();
     if (typeof id === "string") await sessions.deleteOne({ _id: hash(id) });
-    res.clearCookie("dixaz_session", cookieOptions(config));
+    res.clearCookie("dixaz_session", cookieOptions(config, req));
     res.redirect(303, config.origin + "/login");
   });
 
   router.post("/logout", csrf(config), async (req, res) => {
-    const id = req.cookies?.dixaz_session;
+    let id = req.cookies?.dixaz_session;
+    const auth = req.get("authorization");
+    if (!id && auth && auth.startsWith("Bearer ")) id = auth.slice(7).trim();
     if (typeof id === "string") await sessions.deleteOne({ _id: hash(id) });
-    res.clearCookie("dixaz_session", cookieOptions(config));
+    res.clearCookie("dixaz_session", cookieOptions(config, req));
     res.redirect(303, config.origin + "/login");
   });
 

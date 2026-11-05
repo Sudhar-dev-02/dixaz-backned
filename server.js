@@ -77,13 +77,15 @@ export function createApp(db, config) {
   app.use(express.urlencoded({ extended: true }));
 
   app.get("/logout", async (req, res) => {
-    const id = req.cookies?.dixaz_session;
+    let id = req.cookies?.dixaz_session;
+    const auth = req.get("authorization");
+    if (!id && auth && auth.startsWith("Bearer ")) id = auth.slice(7).trim();
     if (typeof id === "string") {
       try {
         await stores(db).sessions.deleteOne({ _id: hash(id) });
       } catch {}
     }
-    res.clearCookie("dixaz_session", cookieOptions(config));
+    res.clearCookie("dixaz_session", cookieOptions(config, req));
     return res.redirect(303, "/");
   });
 
