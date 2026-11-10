@@ -20,6 +20,7 @@ export const blank = () => ({
   packages: [],
   documents: [],
   followups: [],
+  expenses: [],
   settings: {
     name: "DIXAZ",
     address: "Polur, Tiruvannamalai, Tamil Nadu 606803",
@@ -463,6 +464,8 @@ export function apply(s, action, input) {
         discount: amt,
         tax: z.coerce.number().min(0).max(100),
         terms: txt,
+        projectId: id.optional().default(""),
+        salesLeadId: id.optional().default(""),
       })
       .parse(p);
     x.workStart ??= x.date;
@@ -517,7 +520,7 @@ export function apply(s, action, input) {
       throw new Error("Accept quotation before conversion");
     if (v.documents.some((t) => t.sourceId === d.id))
       throw new Error("Quotation already converted");
-    createDoc({
+    const inv = createDoc({
       kind: "invoice",
       clientId: d.clientId,
       date: today(),
@@ -532,7 +535,52 @@ export function apply(s, action, input) {
       tax: d.tax,
       terms: d.terms,
       sourceId: d.id,
+      projectId: d.projectId || "",
+      salesLeadId: d.salesLeadId || "",
     });
+    // Seamlessly connect accepted quotation to project delivery
+    if (!v.projects.some((pr) => pr.quotationId === d.id)) {
+      const clientObj = v.clients.find((c) => c.id === d.clientId);
+      const newProj = {
+        id: newId(),
+        clientId: d.clientId,
+        name: (clientObj?.name || "Client") + " Project",
+        description: d.description || ("Delivery for quotation " + d.number),
+        due: d.due || d.workEnd || today(),
+        visible: true,
+        status: "Active",
+        budget: d.subtotal || 0,
+        quotationId: d.id,
+        salesLeadId: d.salesLeadId || "",
+        progress: 0,
+      };
+      v.projects.push(newProj);
+      inv.projectId = newProj.id;
+      d.projectId = newProj.id;
+    }
+  } else if (action === "expense") {
+    const x = z
+      .object({
+        id: id.optional(),
+        category: txt.min(1),
+        kind: z.enum(["operational", "project", "salary"]).default("operational"),
+        projectId: id.optional().default(""),
+        memberId: id.optional().default(""),
+        amount: amt.refine((n) => n > 0, "Expense amount must be greater than zero"),
+        date,
+        paymentMode: z.enum(["UPI", "Bank transfer", "Cash", "Other"]).default("Bank transfer"),
+        reference: txt.optional().default(""),
+        notes: txt.optional().default(""),
+      })
+      .parse(p);
+    v.expenses = v.expenses || [];
+    const oldIdx = v.expenses.findIndex((e) => e.id === x.id);
+    const item = { ...x, id: x.id || newId() };
+    if (oldIdx >= 0) v.expenses[oldIdx] = item;
+    else v.expenses.push(item);
+  } else if (action === "removeExpense") {
+    const x = z.object({ id }).parse(p);
+    v.expenses = (v.expenses || []).filter((e) => e.id !== x.id);
   } else if (action === "payment") {
     const x = z
       .object({

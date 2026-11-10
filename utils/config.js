@@ -34,20 +34,34 @@ export function readConfig() {
     .map((s) => s.trim())
     .filter(Boolean);
 
-  const originsSet = new Set([appUrl.origin, ...extraOrigins]);
-  if (!production) {
-    originsSet.add("http://localhost:5173");
-    originsSet.add("http://localhost:3000");
-    originsSet.add("http://127.0.0.1:5173");
-    originsSet.add("http://127.0.0.1:3000");
-  }
+  const originsSet = new Set([
+    appUrl.origin,
+    "http://localhost:5173",
+    "http://localhost:5174",
+    "http://localhost:3000",
+    "http://127.0.0.1:5173",
+    "http://127.0.0.1:5174",
+    "http://127.0.0.1:3000",
+    ...extraOrigins,
+  ]);
 
   const allowedOrigins = Array.from(originsSet);
 
   const isAllowedOrigin = (origin) => {
     if (!origin) return true;
     if (extraOrigins.includes("*")) return true;
-    return allowedOrigins.includes(origin);
+    try {
+      const u = new URL(origin);
+      if (
+        u.hostname === "localhost" ||
+        u.hostname === "127.0.0.1" ||
+        u.hostname === "::1"
+      ) {
+        return true;
+      }
+    } catch {}
+    const cleanOrigin = origin.replace(/\/$/, "");
+    return allowedOrigins.some((o) => o.replace(/\/$/, "") === cleanOrigin);
   };
 
   return {

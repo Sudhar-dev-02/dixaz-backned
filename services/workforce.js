@@ -129,6 +129,22 @@ export function workforceAction(v, a, action, p) {
     t.status = x.decision === "Approved" ? "Completed" : "In progress";
     t.progress = x.decision === "Approved" ? 100 : Math.min(99, t.progress);
     event(t, x.decision, x.note || "Work approved");
+
+    // Recalculate parent project progress & completion status
+    if (t.projectId && v.projects) {
+      const pTasks = v.tasks.filter((tk) => tk.projectId === t.projectId);
+      const pr = v.projects.find((pj) => pj.id === t.projectId);
+      if (pr && pTasks.length > 0) {
+        pr.progress = Math.round(
+          pTasks.reduce((acc, tk) => acc + (tk.progress || 0), 0) / pTasks.length,
+        );
+        if (pTasks.every((tk) => tk.status === "Completed")) {
+          pr.status = "Completed";
+        } else if (pr.status === "Completed") {
+          pr.status = "Active";
+        }
+      }
+    }
     return v;
   }
   const t = assigned();

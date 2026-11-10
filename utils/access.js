@@ -15,6 +15,7 @@ export function normalize(s) {
     projects: s.projects || [],
     tasks: s.tasks || [],
     updates: s.updates || [],
+    expenses: s.expenses || [],
   };
   v.employeeSeq = Math.max(
     s.employeeSeq || 0,
@@ -22,14 +23,26 @@ export function normalize(s) {
       Number(m.employeeCode?.match(/^DIXAZ(\d+)$/)?.[1] || 0),
     ),
   );
-  v.members = v.members.map((m) => ({
-    ...m,
-    employeeCode:
-      m.employeeCode ||
-      (m.role !== "client"
-        ? "DIXAZ" + String(++v.employeeSeq).padStart(5, "0")
-        : undefined),
-  }));
+  v.members = v.members.map((m) => {
+    const salary = Number(m.salary) || 0;
+    const salaryType = m.salaryType || "Monthly";
+    const hourlyRate =
+      Number(m.hourlyRate) ||
+      (salary ? Math.round(salary / (salaryType === "Hourly" ? 1 : 200)) : 0);
+    return {
+      ...m,
+      employeeCode:
+        m.employeeCode ||
+        (m.role !== "client"
+          ? "DIXAZ" + String(++v.employeeSeq).padStart(5, "0")
+          : undefined),
+      salary,
+      salaryType,
+      hourlyRate,
+      phone: m.phone || "",
+      joiningDate: m.joiningDate || "",
+    };
+  });
   const used = new Set(v.services.map((x) => x.code).filter(Boolean));
   let next = 2001;
   v.services = v.services.map((x) => {
@@ -55,6 +68,43 @@ export function normalize(s) {
     history: t.history || [],
     referenceUrl: t.referenceUrl || "",
     status: t.status === "To do" ? "Pending" : t.status,
+  }));
+  v.projects = (v.projects || []).map((p) => {
+    const pTasks = v.tasks.filter((t) => t.projectId === p.id);
+    const computedProgress = pTasks.length
+      ? Math.round(
+          pTasks.reduce((sum, t) => sum + (t.progress || 0), 0) / pTasks.length,
+        )
+      : (p.progress || 0);
+    const allDone = pTasks.length > 0 && pTasks.every((t) => t.status === "Completed");
+    const computedStatus = allDone
+      ? "Completed"
+      : (p.status || (p.due && p.due < today() ? "Delayed" : "Active"));
+    return {
+      ...p,
+      status: computedStatus,
+      budget: Number(p.budget) || 0,
+      quotationId: p.quotationId || "",
+      salesLeadId: p.salesLeadId || "",
+      progress: computedProgress,
+    };
+  });
+  v.documents = (v.documents || []).map((d) => ({
+    ...d,
+    projectId: d.projectId || "",
+    salesLeadId: d.salesLeadId || "",
+  }));
+  v.expenses = (v.expenses || []).map((e) => ({
+    id: e.id || crypto.randomUUID(),
+    category: e.category || "General",
+    kind: e.kind || "operational",
+    projectId: e.projectId || "",
+    memberId: e.memberId || "",
+    amount: Number(e.amount) || 0,
+    date: e.date || today(),
+    paymentMode: e.paymentMode || "Bank transfer",
+    reference: e.reference || "",
+    notes: e.notes || "",
   }));
   return v;
 }
@@ -118,6 +168,7 @@ export function filtered(s, a) {
       packages: s.packages,
       documents: s.documents,
       followups: s.followups,
+      expenses: s.expenses || [],
       settings: s.settings,
       requests: s.requests.filter((r) => r.requestedBy === a.memberId),
     });
@@ -469,6 +520,10 @@ export function applyAuthorized(s, a, action, p) {
         clientId: text,
         designation: text,
         active: z.boolean(),
+        salary: z.coerce.number().min(0).max(10000000).optional().default(0),
+        salaryType: z.enum(["Monthly", "Hourly"]).optional().default("Monthly"),
+        phone: text.optional().default(""),
+        joiningDate: z.union([date, z.literal("")]).optional().default(""),
       })
       .parse(p);
     const old = v.members.find((m) => m.id === x.id);
@@ -483,9 +538,17 @@ export function applyAuthorized(s, a, action, p) {
       if (!c || c.email.toLowerCase() !== x.email)
         throw new Error("Client login email must match the selected client");
     } else x.clientId = "";
+    const salary = Number(x.salary) || 0;
+    const salaryType = x.salaryType || "Monthly";
+    const hourlyRate = salary
+      ? Math.round(salary / (salaryType === "Hourly" ? 1 : 200))
+      : 0;
     const member = {
       ...old,
       ...x,
+      salary,
+      salaryType,
+      hourlyRate,
       id: old?.id || crypto.randomUUID(),
       employeeCode:
         old?.employeeCode ||
@@ -509,13 +572,17 @@ export function applyAuthorized(s, a, action, p) {
         description: text,
         due: date,
         visible: z.boolean(),
+        status: z.enum(["Active", "Completed", "Delayed", "On Hold"]).optional().default("Active"),
+        budget: z.coerce.number().min(0).max(100000000).optional().default(0),
+        quotationId: id.optional().default(""),
+        salesLeadId: id.optional().default(""),
       })
       .parse(p);
     if (!v.clients.some((c) => c.id === x.clientId))
       throw new Error("Client not found");
     const old = v.projects.find((t) => t.id === x.id);
     if (x.id && !old) throw new Error("Project not found");
-    const proj = { ...x, id: old?.id || crypto.randomUUID() };
+    const proj = { ...old, ...x, id: old?.id || crypto.randomUUID() };
     if (old) v.projects[v.projects.indexOf(old)] = proj;
     else v.projects.push(proj);
     return v;
@@ -740,6 +807,8 @@ export function applyAuthorized(s, a, action, p) {
       "followup",
       "resolve",
       "monthly",
+      "expense",
+      "removeExpense",
     ].includes(action)
   )
     return apply(v, action, p);
