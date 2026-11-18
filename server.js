@@ -51,6 +51,7 @@ export function createApp(db, config) {
 
   app.use(
     helmet({
+      crossOriginResourcePolicy: { policy: "cross-origin" },
       contentSecurityPolicy: {
         directives: {
           defaultSrc: ["'self'"],

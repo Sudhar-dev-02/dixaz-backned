@@ -44,6 +44,9 @@ export async function currentUser(db, req) {
   if (!id && auth && auth.startsWith("Bearer ")) {
     id = auth.slice(7).trim();
   }
+  if (!id && typeof req.query?.token === "string") {
+    id = req.query.token.trim();
+  }
   if (typeof id !== "string" || id.length > 128) return null;
   const row = await stores(db).sessions.findOne({
     _id: hash(id),

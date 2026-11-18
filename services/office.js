@@ -660,6 +660,45 @@ export function apply(s, action, input) {
       )
     )
       throw new Error("Select a valid payment QR image");
+  } else if (action === "deleteAsset") {
+    const x = z.object({ id }).parse(p);
+    const asset = v.assets.find((f) => f.id === x.id);
+    if (!asset) throw new Error("File not found");
+    v.assets = v.assets.filter((f) => f.id !== x.id);
+    if (asset.kind === "paymentQR") {
+      const remainingQRs = v.assets
+        .filter((f) => f.kind === "paymentQR" && f.targetId === asset.targetId)
+        .sort((a, b) => b.version - a.version);
+      if (v.settings.paymentQrId === asset.id || asset.current) {
+        if (remainingQRs.length > 0) {
+          remainingQRs.forEach((r, idx) => {
+            r.current = idx === 0;
+          });
+          v.settings.paymentQrId = remainingQRs[0].id;
+        } else {
+          v.settings.paymentQrId = "";
+        }
+      }
+    } else {
+      const remaining = v.assets
+        .filter((f) => f.kind === asset.kind && f.targetId === asset.targetId)
+        .sort((a, b) => b.version - a.version);
+      if (remaining.length > 0 && !remaining.some((f) => f.current)) {
+        remaining[0].current = true;
+      }
+    }
+  } else if (action === "setAssetCurrent") {
+    const x = z.object({ id }).parse(p);
+    const asset = v.assets.find((f) => f.id === x.id);
+    if (!asset) throw new Error("File not found");
+    v.assets.forEach((f) => {
+      if (f.kind === asset.kind && f.targetId === asset.targetId) {
+        f.current = f.id === asset.id;
+      }
+    });
+    if (asset.kind === "paymentQR") {
+      v.settings.paymentQrId = asset.id;
+    }
   } else if (action === "monthly") {
     const now = today();
     const month = now.slice(0, 7);

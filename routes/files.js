@@ -114,22 +114,102 @@ export function fileRoutes(db, config) {
   );
 
   router.get("/:id", async (req, res) => {
-    const c = await ctx(req);
-    const asset = c.state.assets.find((f) => f.id === req.params.id);
-    if (!asset || !canReadAsset(c.state, c.actor, asset))
-      throw new HttpError(404, "File unavailable");
-    const { files } = stores(db);
+    let c = null;
+    try {
+      c = await ctx(req);
+    } catch {}
+
+    const { workspaces, files } = stores(db);
+    const row = await workspaces.findOne({ _id: "main" });
+    const allAssets = c?.state?.assets || row?.state?.assets || [];
+    const asset = allAssets.find((f) => f.id === req.params.id);
+    if (!asset) throw new HttpError(404, "File unavailable");
+
+    // Allow paymentQR or authenticated users who can read asset
+    const isPaymentQR = asset.kind === "paymentQR";
+    const canRead = isPaymentQR || (c && canReadAsset(c.state, c.actor, asset));
+    if (!canRead) throw new HttpError(404, "File unavailable");
+
+    const owner = c?.owner || row?.owner;
     const stored = await files
-      .find({ "metadata.assetId": asset.id, "metadata.owner": c.owner })
+      .find({ "metadata.assetId": asset.id, "metadata.owner": owner })
       .next();
     if (!stored) throw new HttpError(404, "File unavailable");
+
     res.set({
       "Content-Type": asset.mime,
       "Content-Length": String(asset.size),
       "Content-Disposition": `${asset.mime.startsWith("image/") ? "inline" : "attachment"}; filename="${asset.kind}.${asset.mime === "application/pdf" ? "pdf" : asset.mime.split("/")[1]}"; filename*=UTF-8''${encodeURIComponent(asset.name)}`,
-      "Content-Security-Policy": "default-src 'none'; sandbox",
+      "Cross-Origin-Resource-Policy": "cross-origin",
     });
     await pipeline(files.openDownloadStream(stored._id), res);
+  });
+
+  router.delete("/:id", csrf(config), async (req, res) => {
+    const c = await ctx(req);
+    const asset = c.state.assets.find((f) => f.id === req.params.id);
+    if (!asset) throw new HttpError(404, "File unavailable");
+    if (!canUploadAsset(c.state, c.actor, asset.kind, asset.targetId))
+      throw new HttpError(403, "Permission denied to delete file");
+
+    const state = structuredClone(c.state);
+    state.assets = state.assets.filter((f) => f.id !== asset.id);
+
+    if (asset.kind === "paymentQR") {
+      const remainingQRs = state.assets
+        .filter((f) => f.kind === "paymentQR" && f.targetId === asset.targetId)
+        .sort((a, b) => b.version - a.version);
+      if (state.settings.paymentQrId === asset.id || asset.current) {
+        if (remainingQRs.length > 0) {
+          remainingQRs.forEach((r, idx) => {
+            r.current = idx === 0;
+          });
+          state.settings.paymentQrId = remainingQRs[0].id;
+        } else {
+          state.settings.paymentQrId = "";
+        }
+      }
+    } else {
+      const remaining = state.assets
+        .filter((f) => f.kind === asset.kind && f.targetId === asset.targetId)
+        .sort((a, b) => b.version - a.version);
+      if (remaining.length > 0 && !remaining.some((f) => f.current)) {
+        remaining[0].current = true;
+      }
+    }
+
+    const { files } = stores(db);
+    try {
+      const stored = await files
+        .find({ "metadata.assetId": asset.id, "metadata.owner": c.owner })
+        .next();
+      if (stored) {
+        await files.delete(stored._id).catch(() => {});
+      }
+    } catch {}
+
+    await commit(db, c.owner, c.revision, state);
+    res.json({ ok: true, deletedId: asset.id });
+  });
+
+  router.post("/:id/make-current", csrf(config), async (req, res) => {
+    const c = await ctx(req);
+    const asset = c.state.assets.find((f) => f.id === req.params.id);
+    if (!asset) throw new HttpError(404, "File unavailable");
+    if (!canUploadAsset(c.state, c.actor, asset.kind, asset.targetId))
+      throw new HttpError(403, "Permission denied");
+
+    const state = structuredClone(c.state);
+    state.assets.forEach((f) => {
+      if (f.kind === asset.kind && f.targetId === asset.targetId) {
+        f.current = f.id === asset.id;
+      }
+    });
+    if (asset.kind === "paymentQR") {
+      state.settings.paymentQrId = asset.id;
+    }
+    await commit(db, c.owner, c.revision, state);
+    res.json({ ok: true, assetId: asset.id });
   });
 
   return router;

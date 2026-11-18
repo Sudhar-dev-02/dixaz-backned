@@ -15,7 +15,7 @@ export function documentRoutes(db, config) {
       (d) => d.id === req.params.id,
     );
     if (!document) throw new HttpError(404, "Document unavailable");
-    res.json({ document });
+    res.json({ document, settings: c.state?.settings });
   });
 
   return router;
