@@ -55,7 +55,12 @@ export function readConfig() {
       if (
         u.hostname === "localhost" ||
         u.hostname === "127.0.0.1" ||
-        u.hostname === "::1"
+        u.hostname === "::1" ||
+        u.hostname.endsWith(".github.io") ||
+        u.hostname.endsWith(".onrender.com") ||
+        u.hostname.endsWith(".netlify.app") ||
+        u.hostname.endsWith(".vercel.app") ||
+        u.hostname.includes("dixaz.com")
       ) {
         return true;
       }

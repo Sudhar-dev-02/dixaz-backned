@@ -123,13 +123,15 @@ export function createApp(db, config) {
     res.status(404).json({ error: "API route not found" });
   });
 
-  const dist = resolve(import.meta.dirname, "../frontend/dist");
-  if (existsSync(dist)) {
-    app.use(express.static(dist, { index: false }));
+  const frontendDistPath = existsSync(resolve(import.meta.dirname, "../dixaz-frontend/dist"))
+    ? resolve(import.meta.dirname, "../dixaz-frontend/dist")
+    : resolve(import.meta.dirname, "../frontend/dist");
+  if (existsSync(frontendDistPath)) {
+    app.use(express.static(frontendDistPath, { index: false }));
     app.get("/{*splat}", (_req, res) => {
       res
         .set("Cache-Control", "no-store")
-        .sendFile(resolve(dist, "index.html"));
+        .sendFile(resolve(frontendDistPath, "index.html"));
     });
   } else {
     app.get("/", (_req, res) => {
