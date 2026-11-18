@@ -6,7 +6,7 @@ import { rateLimit } from "express-rate-limit";
 import multer from "multer";
 import { resolve } from "node:path";
 import { fileURLToPath } from "node:url";
-import { existsSync } from "node:fs";
+import { existsSync, readFileSync } from "node:fs";
 import { ZodError } from "zod";
 import { readConfig } from "./utils/config.js";
 import { connectDb, stores } from "./models/db.js";
@@ -126,12 +126,134 @@ export function createApp(db, config) {
   const frontendDistPath = existsSync(resolve(import.meta.dirname, "../dixaz-frontend/dist"))
     ? resolve(import.meta.dirname, "../dixaz-frontend/dist")
     : resolve(import.meta.dirname, "../frontend/dist");
+
+  const agentLinkHeader = '</llms.txt>; rel="describedby"; type="text/plain", </index.md>; rel="alternate"; type="text/markdown"';
+
+  app.get("/llms.txt", (_req, res) => {
+    const p = resolve(frontendDistPath, "llms.txt");
+    res.set("Link", agentLinkHeader);
+    if (existsSync(p)) return res.type("text/plain; charset=utf-8").sendFile(p);
+    res.type("text/plain; charset=utf-8").send("# DIXAZ\n\n> Digital agency based in Tiruvannamalai, Tamil Nadu.\n");
+  });
+
+  app.get("/llms-full.txt", (_req, res) => {
+    const p = resolve(frontendDistPath, "llms-full.txt");
+    res.set("Link", agentLinkHeader);
+    if (existsSync(p)) return res.type("text/plain; charset=utf-8").sendFile(p);
+    res.type("text/plain; charset=utf-8").send("# DIXAZ — Full Documentation\n");
+  });
+
+  app.get("/index.md", (_req, res) => {
+    const p = resolve(frontendDistPath, "index.md");
+    res.set("Link", agentLinkHeader);
+    if (existsSync(p)) return res.type("text/markdown; charset=utf-8").sendFile(p);
+    res.type("text/markdown; charset=utf-8").send("# DIXAZ\n");
+  });
+
+  app.get("/.well-known/mcp/server-card.json", (_req, res) => {
+    const p = resolve(frontendDistPath, ".well-known/mcp/server-card.json");
+    if (existsSync(p)) {
+      try {
+        const data = JSON.parse(readFileSync(p, "utf-8"));
+        return res.json(data);
+      } catch {}
+    }
+    res.json({
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "name": "dixaz-mcp-server",
+      "version": "1.0.0",
+      "description": "Official Model Context Protocol server for DIXAZ digital agency",
+      "homepage": "https://www.dixaz.com",
+      "endpoint": "https://www.dixaz.com/api/mcp",
+      "capabilities": {
+        "tools": { "listChanged": false },
+        "resources": { "subscribe": false, "listChanged": false },
+        "prompts": { "listChanged": false }
+      },
+      "metadata": {
+        "publisher": "DIXAZ",
+        "contact": "dixaz24.in@gmail.com",
+        "telephone": "+917502737506",
+        "address": "Polur, Tiruvannamalai, Tamil Nadu 606803, India",
+        "website": "https://www.dixaz.com"
+      }
+    });
+  });
+
   if (existsSync(frontendDistPath)) {
     app.use(express.static(frontendDistPath, { index: false }));
-    app.get("/{*splat}", (_req, res) => {
-      res
-        .set("Cache-Control", "no-store")
-        .sendFile(resolve(frontendDistPath, "index.html"));
+
+    const validSpaRoutes = [
+      "",
+      "/",
+      "/about",
+      "/service",
+      "/contact",
+      "/terms",
+      "/privacy",
+      "/login",
+      "/logout",
+      "/workspace",
+      "/admin",
+      "/office",
+    ];
+
+    app.get("/{*splat}", (req, res) => {
+      const rawPath = req.path.replace(/\/$/, "");
+      const normalizedPath = rawPath === "" ? "/" : rawPath;
+
+      // Handle Accept: text/markdown on homepage (Requirement 15)
+      const accept = req.headers.accept || "";
+      if (
+        normalizedPath === "/" &&
+        (accept.includes("text/markdown") ||
+          accept.includes("text/x-markdown") ||
+          req.query.format === "markdown" ||
+          req.query.format === "md")
+      ) {
+        const mdFile = resolve(frontendDistPath, "index.md");
+        if (existsSync(mdFile)) {
+          return res
+            .status(200)
+            .set({
+              "Content-Type": "text/markdown; charset=utf-8",
+              "Vary": "Accept",
+              "Link": agentLinkHeader,
+            })
+            .sendFile(mdFile);
+        }
+      }
+
+      const isKnownRoute =
+        validSpaRoutes.includes(normalizedPath) ||
+        normalizedPath.startsWith("/workspace/") ||
+        normalizedPath.startsWith("/admin/") ||
+        normalizedPath.startsWith("/office/") ||
+        normalizedPath.startsWith("/documents/");
+
+      if (isKnownRoute) {
+        res
+          .status(200)
+          .set({
+            "Cache-Control": "no-store",
+            "Link": agentLinkHeader,
+          })
+          .sendFile(resolve(frontendDistPath, "index.html"));
+      } else {
+        // Return a real 404 status for missing pages (Requirement 4)
+        const notFoundFile = resolve(frontendDistPath, "404.html");
+        res
+          .status(404)
+          .set({
+            "Cache-Control": "no-store",
+            "Link": agentLinkHeader,
+          })
+          .sendFile(
+            existsSync(notFoundFile)
+              ? notFoundFile
+              : resolve(frontendDistPath, "index.html"),
+          );
+      }
     });
   } else {
     app.get("/", (_req, res) => {
